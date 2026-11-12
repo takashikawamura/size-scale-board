@@ -1,0 +1,879 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>スケール操作盤</title>
+<link rel="icon" href="data:,">
+<style>
+:root { --bg:#f4f2ec; --ink:#1f1f1f; --sub:#6f6f6f; --panel:#fbfaf6; --line:rgba(0,0,0,.12); --accent:#d2452b; --btn:#fff; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg:#17181a; --ink:#ececec; --sub:#9a9a9a; --panel:#1f2023; --line:rgba(255,255,255,.13); --btn:#2a2b2f; color-scheme:dark; }
+}
+:root[data-theme="dark"] { --bg:#17181a; --ink:#ececec; --sub:#9a9a9a; --panel:#1f2023; --line:rgba(255,255,255,.13); --btn:#2a2b2f; color-scheme:dark; }
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); overflow:hidden;
+  font:14px/1.45 -apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+#app { display:flex; flex-direction:column; height:100vh; height:100dvh; }
+#view { position:relative; flex:1; min-height:0; background:#222; }
+canvas { position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+.hint { position:absolute; top:calc(env(safe-area-inset-top, 0px) + 12px); left:16px; right:16px; text-align:center;
+  color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.6); pointer-events:none; transition:opacity .8s; }
+#panel { flex:none; max-height:50dvh; overflow-y:auto; background:var(--panel); border-top:1px solid var(--line);
+  padding:10px max(16px, env(safe-area-inset-right, 0px)) calc(env(safe-area-inset-bottom, 0px) + 12px) max(16px, env(safe-area-inset-left, 0px)); }
+header { display:flex; align-items:baseline; gap:8px; }
+h1 { font-size:15px; margin:0; font-weight:700; }
+h1 small { font-weight:400; color:var(--sub); margin-left:6px; font-size:12px; }
+#fold { margin-left:auto; border:1px solid var(--line); background:var(--btn); color:var(--ink); border-radius:6px; padding:2px 10px; font-size:12px; }
+.presets { display:flex; gap:8px; margin:10px 0 4px; }
+.presets button { flex:1; padding:9px 0; border:1.5px solid var(--accent); color:var(--accent); background:var(--btn);
+  border-radius:8px; font-size:15px; font-weight:700; cursor:pointer; }
+.presets button:active { background:var(--accent); color:#fff; }
+#sound { width:100%; margin:4px 0 2px; padding:7px 0; border:1px solid var(--line); background:var(--btn); color:var(--ink); border-radius:8px; font-size:13px; cursor:pointer; }
+#sound.on { border-color:var(--accent); color:var(--accent); }
+.knob { padding:6px 0 4px; }
+.cat { margin:14px 0 2px; padding-top:8px; border-top:1px solid var(--line); font-size:12px; font-weight:700; color:var(--accent); }
+.cat small { font-weight:400; color:var(--sub); margin-left:6px; }
+.knob .top { display:flex; justify-content:space-between; align-items:baseline; }
+.knob .name { font-weight:600; font-size:13px; }
+.knob .ends { display:flex; justify-content:space-between; color:var(--sub); font-size:11px; margin-top:-2px; }
+.master { border-bottom:1px solid var(--line); padding-bottom:8px; margin-bottom:4px; }
+.master .name { font-size:14px; }
+input[type=range] { width:100%; margin:4px 0; accent-color:var(--accent); height:22px; }
+details { margin-top:10px; color:var(--sub); font-size:12.5px; }
+details summary { cursor:pointer; color:var(--ink); }
+details p { margin:6px 0; }
+#panel.folded .more { display:none; }
+@media (min-width:860px) {
+  #app { flex-direction:row; }
+  #panel { width:340px; max-height:none; border-top:0; border-left:1px solid var(--line); padding:18px 20px; }
+  #fold { display:none; }
+  #panel.folded .more { display:block; }
+}
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="app">
+  <div id="view">
+    <canvas id="c"></canvas>
+    <div class="hint" id="hint">同じ物体のまま、大きさの「手がかり」だけを動かす</div>
+  </div>
+  <aside id="panel">
+    <header><h1>大きさ<small>スケール操作盤</small></h1><button id="fold" type="button">つまみを隠す</button></header>
+    <div class="presets"><button type="button" data-p="0">模型</button><button type="button" data-p="1">巨大</button></div>
+    <button type="button" id="sound">音を出す(ヘッドホン推奨)</button>
+    <div class="knob master">
+      <div class="top"><span class="name">全部まとめて</span></div>
+      <input type="range" id="master" min="0" max="1000" value="0">
+      <div class="ends"><span>模型</span><span>巨大</span></div>
+    </div>
+    <div class="more">
+      <div id="knobs"></div>
+      <details>
+        <summary>これは何？</summary>
+        <p>冷却塔の形と、画面の中での大きさは、どのつまみを動かしても変わらない。変わるのは、ぼけ・かすみ・模様の細かさ・動きの速さ・まわりの物・光・視点・色だけ。</p>
+        <p>それでも模型にも、高さ150mの塔にも見える。大きさは目に見えているのではなく、こうした手がかりから推し量っている。1本ずつ動かすと、どの手がかりがよく効くかを確かめられる。</p>
+      </details>
+    </div>
+  </aside>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ---------- つまみ(0 = 模型側、1 = 巨大側) ----------
+const KNOBS = [
+  { id:'dof', cat:'lens',      name:'被写界深度',       ends:['浅い(ぼける)', 'パンフォーカス'] },
+  { id:'fog', cat:'air',      name:'大気(かすみ)',     ends:['澄んでいる', 'かすむ'] },
+  { id:'detail', cat:'cmp',   name:'ディテールの周期', ends:['粗い・つるつる', '細かい・汚れ'] },
+  { id:'speed', cat:'view',    name:'動きの速さ',       ends:['速い', 'ゆっくり'] },
+  { id:'parallax', cat:'view', name:'視差',             ends:['大きく回り込む', 'ほとんど動かない'] },
+  { id:'ref', cat:'cmp',      name:'参照物',           ends:['机の小物', 'なし', '柵・街灯・管理棟'] },
+  { id:'light', cat:'air',    name:'光',               ends:['近くのライト', '曇り空の拡散光'] },
+  { id:'view', cat:'view',     name:'視点の高さ',       ends:['見下ろす', '人の目の高さ'] },
+  { id:'sat', cat:'lens',      name:'彩度',             ends:['鮮やか', 'くすむ'] },
+  { id:'cloud', cat:'air',    name:'雲',               ends:['なし', '頂上にかかる・影が流れる'] },
+  { id:'blue', cat:'air',     name:'空気の青み',       ends:['色が変わらない', '遠くほど青い'] },
+  // 画角は模型・巨大のどちらとも決まらないので、ボタンと「全部まとめて」では動かさない(free)。
+  // 塔の画面上の大きさは保ったまま、画角に合わせてカメラが寄る・離れる(ドリーズーム)
+  { id:'fov', cat:'lens',      name:'画角(ボタンでは動かない)', ends:['望遠 20°', '広角 90°'], free:true, init:0.46 },
+  { id:'sound', cat:'snd',    name:'音(「音を出す」で鳴る)', ends:['狭い部屋・乾いた高い音', '広い空間・長い響き・低い唸り'] },
+];
+// 画面での並べ方(?k= の順番は上の KNOBS のまま変えない)
+const CATS = [
+  { id:'lens', name:'レンズと仕上げ', note:'どう写すか' },
+  { id:'air',  name:'空気と光',       note:'あいだの空気と、照らし方' },
+  { id:'view', name:'視点と動き',     note:'どこから、どう動いて見るか' },
+  { id:'cmp',  name:'比較',           note:'大きさの分かる物と並べる' },
+  { id:'snd',  name:'音響',           note:'響きと音の高さ' },
+];
+const k = Object.fromEntries(KNOBS.map(o => [o.id, o.init ?? 0]));
+const TIED = KNOBS.filter(o => !o.free);   // ボタンと「全部まとめて」で動くつまみ
+
+const lerp = (a, b, t) => a + (b - a) * t;
+const lerpLog = (a, b, t) => Math.exp(lerp(Math.log(a), Math.log(b), t));
+const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+// ---------- 描画の準備 ----------
+const canvas = document.getElementById('c');
+const view = document.getElementById('view');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:false, powerPreference:'high-performance' });
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+renderer.setPixelRatio(DPR);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 1.0;
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, 1, 1, 40000);
+const FOG_COL = new THREE.Color(0xcfd4d9);
+scene.fog = new THREE.FogExp2(FOG_COL.clone(), 0);
+
+const rt = new THREE.WebGLRenderTarget(4, 4, { type:THREE.HalfFloatType, samples:4 });
+rt.depthTexture = new THREE.DepthTexture(4, 4);
+rt.depthTexture.type = THREE.UnsignedIntType;
+
+// ---------- シェーダーの部品 ----------
+const NOISE = `
+float h11(float x){ return fract(sin(x*127.1)*43758.5453); }
+float n1(float x){ float i=floor(x), f=fract(x); f=f*f*(3.-2.*f); return mix(h11(i), h11(i+1.), f); }
+float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7)))*43758.5453); }
+float n2(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(h21(i), h21(i+vec2(1.,0.)), f.x), mix(h21(i+vec2(0.,1.)), h21(i+1.), f.x), f.y); }
+// 間隔 s の線。画面で細かすぎるときは消す(ちらつき防止)
+float lines(float x, float s){ float fw = fwidth(x)/s; float f = abs(fract(x/s+.5)-.5);
+  return (1.-smoothstep(.5*fw, 1.5*fw, f)) * (1.-smoothstep(.25, .6, fw)); }
+// 流れる雲の影(高さ900mの雲を、日の光の向きに沿って落とす。t は時刻)
+float cloudSh(vec3 w, float t){
+  vec2 p = w.xz + vec2(-.333, .5) * (900. - w.y) - vec2(8., 3.) * t;
+  float n = n2(p / 380.) * .65 + n2(p / 150. + 5.) * .35;
+  return smoothstep(.4, .6, n);
+}
+`;
+// 雲の影は塔と地面の両方に同じ式で落とす
+const CS = { uCS:{ value:0, glsl:'float' }, uWT:{ value:0, glsl:'float' } };
+const WORLD_POS = `vec4 wp_ = vec4(transformed, 1.);
+#ifdef USE_INSTANCING
+wp_ = instanceMatrix * wp_;
+#endif
+vW = (modelMatrix * wp_).xyz;`;
+function patch(mat, uniforms, vary, vertCode, fragCode) {
+  mat.onBeforeCompile = s => {
+    Object.assign(s.uniforms, uniforms);
+    s.vertexShader = s.vertexShader
+      .replace('#include <common>', '#include <common>\n' + vary)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + vertCode);
+    s.fragmentShader = s.fragmentShader
+      .replace('#include <common>', '#include <common>\n' + vary + Object.keys(uniforms).map(n => `uniform ${uniforms[n].glsl} ${n};`).join('\n') + NOISE)
+      .replace('#include <color_fragment>', '#include <color_fragment>\n' + fragCode.color)
+      .replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n' + (fragCode.normal || ''))
+      .replace('#include <fog_fragment>', (fragCode.fog || '') + '\n#include <fog_fragment>');
+  };
+}
+
+// ---------- 冷却塔 ----------
+const H = 150, Y_LEG = 11, R_THROAT = 34, Y_THROAT = 118, R_BASE = 56;
+const C_HYP = Y_THROAT / Math.sqrt((R_BASE / R_THROAT) ** 2 - 1);
+const towerR = y => R_THROAT * Math.sqrt(1 + ((y - Y_THROAT) / C_HYP) ** 2);
+const R_LEG = towerR(Y_LEG), R_TOP = towerR(H);
+
+const TU = { uDetail:{ value:0, glsl:'float' }, ...CS };
+const towerMat = new THREE.MeshStandardMaterial({ color:0xcdc8be, roughness:0.4, side:THREE.DoubleSide });
+patch(towerMat, TU, 'varying vec3 vL;\nvarying vec3 vW;\n', 'vL = transformed;\n' + WORLD_POS, { color:`
+{
+  diffuseColor.rgb *= 1. - uCS * .55 * cloudSh(vW, uWT);
+  float d = uDetail;
+  float uc = atan(vL.z, vL.x) * 45.;              // 周方向(直径に関係なく縦の目地がまっすぐ並ぶように)
+  float sY = exp(mix(log(24.), log(1.25), d));    // 型枠の打ち継ぎ(横の線)の間隔
+  float sX = exp(mix(log(36.), log(3.2), d));     // 縦の目地の間隔
+  float L = max(lines(vL.y, sY), lines(uc, sX) * .6);
+  float kk = 1. - L * mix(.10, .22, d);
+  kk *= 1. + (h11(floor(vL.y / sY) * 1.7) - .5) * .12 * d;     // 打ち継ぎごとの色むら
+  float col = n1(uc * .9) * n1(uc * .23 + 3.);
+  float streak = smoothstep(.3, .85, col) * smoothstep(30., 150., vL.y + n1(uc * .5) * 40.);
+  kk -= streak * .22 * d;                                    // 雨だれ
+  kk -= (1. - smoothstep(Y_LEG_, 40., vL.y)) * .14 * d;        // 足もとの汚れ
+  float g = n2(vec2(uc, vL.y) * 1.3);
+  kk += (g - .5) * .14 * d * (1. - smoothstep(.3, 1., fwidth(vL.y) * 1.3));
+  // 実物らしさ: 頂上の縁から垂れる細い雨だれ、型枠1枚ごとの色むら、大きなしみ
+  float sc = n1(uc * 2.3) * n1(uc * .71 + 5.);
+  float runLen = 25. + 100. * n1(uc * 1.7 + 9.);
+  kk -= smoothstep(.3, .8, sc) * (1. - smoothstep(runLen * .4, runLen, H_ - vL.y)) * .22 * d;
+  kk *= 1. + (h21(vec2(floor(uc / sX), floor(vL.y / sY))) - .5) * .07 * d;
+  kk *= 1. + (n2(vec2(uc * .04, vL.y * .025)) - .5) * .22 * d;
+  diffuseColor.rgb *= kk;
+  diffuseColor.rgb *= mix(vec3(1.), vec3(1.02, 1., .96), n2(vec2(uc * .02, vL.y * .01)) * d);
+  if (!gl_FrontFacing) diffuseColor.rgb *= .5;
+}`.replace('Y_LEG_', Y_LEG.toFixed(1)).replace('H_', H.toFixed(1)),
+  // 打ち継ぎの段差と、面のうねり(光を受けて浮かぶ凹凸)。遠くて細かすぎる段差は消す
+  normal:`
+{
+  float d = uDetail;
+  float uc = atan(vL.z, vL.x) * 45.;
+  float sY = exp(mix(log(24.), log(1.25), d));
+  float f = fract(vL.y / sY);
+  float fade = 1. - smoothstep(.12, .45, fwidth(vL.y) / sY);
+  float hgt = (-.025 * (1. - smoothstep(0., .07, f)) + .012 * f) * fade * d
+            + .06 * n2(vec2(uc * .25, vL.y * .06)) * d;
+  vec3 sx = dFdx(-vViewPosition), sy = dFdy(-vViewPosition);
+  vec3 r1 = cross(sy, normal), r2 = cross(normal, sx);
+  float det = dot(sx, r1);
+  vec3 grad = sign(det) * (dFdx(hgt) * r1 + dFdy(hgt) * r2);
+  normal = normalize(abs(det) * normal - grad);
+}` });
+
+function makeTowerGeo() {
+  const pts = [];
+  for (let i = 0; i <= 80; i++) { const y = Y_LEG + (H - Y_LEG) * i / 80; pts.push(new THREE.Vector2(towerR(y), y)); }
+  return new THREE.LatheGeometry(pts, 180);
+}
+const towerGeo = makeTowerGeo();
+const rimGeo = new THREE.TorusGeometry(R_TOP, 0.6, 6, 180).rotateX(Math.PI / 2).translate(0, H, 0);
+const ringGeo = new THREE.TorusGeometry(R_LEG, 0.9, 6, 180).rotateX(Math.PI / 2).translate(0, Y_LEG, 0);
+
+// V 字の柱
+const N_LEG = 44;
+const legGeo = new THREE.CylinderGeometry(0.8, 0.8, 1, 6);
+function makeLegs() {
+  const m = new THREE.InstancedMesh(legGeo, towerMat, N_LEG * 2);
+  const up = new THREE.Vector3(0, 1, 0), q = new THREE.Quaternion(), mtx = new THREE.Matrix4();
+  let n = 0;
+  for (let i = 0; i < N_LEG; i++) {
+    const a = i / N_LEG * Math.PI * 2, da = Math.PI / N_LEG;
+    const top = new THREE.Vector3(Math.cos(a) * R_LEG, Y_LEG, Math.sin(a) * R_LEG);
+    for (const s of [-1, 1]) {
+      const b = a + s * da;
+      const bot = new THREE.Vector3(Math.cos(b) * (R_LEG + 1.5), 0, Math.sin(b) * (R_LEG + 1.5));
+      const dir = top.clone().sub(bot), len = dir.length();
+      q.setFromUnitVectors(up, dir.normalize());
+      mtx.compose(bot.clone().lerp(top, .5), q, new THREE.Vector3(1, len, 1));
+      m.setMatrixAt(n++, mtx);
+    }
+  }
+  m.castShadow = m.receiveShadow = true;
+  return m;
+}
+function makeTower(x, z) {
+  const g = new THREE.Group();
+  const shell = new THREE.Mesh(towerGeo, towerMat);
+  const rim = new THREE.Mesh(rimGeo, towerMat), ring = new THREE.Mesh(ringGeo, towerMat);
+  for (const o of [shell, rim, ring]) { o.castShadow = o.receiveShadow = true; g.add(o); }
+  g.add(makeLegs());
+  g.position.set(x, 0, z);
+  scene.add(g);
+  return g;
+}
+const T2 = new THREE.Vector2(-270, -340);
+makeTower(0, 0);
+makeTower(T2.x, T2.y);
+// 奥に並ぶ塔(霧の層ごとに薄れて、距離が見えるように)。カメラから見て手前の塔の向こう 280〜900m に、左右へ散らして置く
+const BACK = [[-428, -104], [114, -522], [-841, -315], [-73, -908], [-644, -688], [163, -856]];
+for (const [x, z] of BACK) makeTower(x, z);
+
+// ---------- 地面 ----------
+const GU = {
+  uMat:{ value:1, glsl:'float' }, uSite:{ value:0, glsl:'float' },
+  uHor:{ value:new THREE.Color(), glsl:'vec3' }, uT2:{ value:T2, glsl:'vec2' }, ...CS,
+};
+const groundMat = new THREE.MeshStandardMaterial({ color:0xffffff, roughness:0.95 });
+patch(groundMat, GU, 'varying vec3 vW;\n', 'vW = (modelMatrix * vec4(transformed, 1.)).xyz;', {
+  color:`
+{
+  vec2 p = vW.xz; float r = length(p); float r2 = length(p - uT2);
+  vec3 neu = vec3(.50, .49, .46) * (.96 + .08 * n2(p * .015));
+  // カッターマット(1目盛 = 模型の 1cm = 5)
+  vec3 mc = vec3(.09, .25, .19) * (.95 + .1 * n2(p * .2));
+  float gm = max(lines(p.x, 5.), lines(p.y, 5.)) * .22 + max(lines(p.x, 25.), lines(p.y, 25.)) * .45
+           + max(lines(p.x, 125.), lines(p.y, 125.)) * .7;
+  mc = mix(mc, vec3(.62, .80, .70), clamp(gm, 0., 1.));
+  // 敷地(1 = 1m)
+  vec3 gr = mix(vec3(.25, .30, .17), vec3(.40, .38, .25), smoothstep(.3, .7, n2(p * .004)));
+  gr *= .8 + .35 * n2(p * .08); gr *= .92 + .16 * n2(p * 1.1);
+  gr *= .88 + .24 * n2(p * 9.) * (1. - smoothstep(.2, .8, fwidth(p.x) * 9.));   // 近くの草の粒
+  float pad = 1. - smoothstep(96., 98., min(r, r2));
+  vec3 conc = vec3(.60, .59, .56) * (.9 + .15 * n2(p * .6));
+  conc *= 1. - .25 * max(lines(p.x, 6.), lines(p.y, 6.));
+  vec3 site = mix(gr, conc, pad);
+  float rd = min(abs(r - 140.), abs(p.x - 140.));
+  float road = 1. - smoothstep(3.8, 4.3, rd);
+  site = mix(site, vec3(.19, .19, .20) * (.9 + .2 * n2(p * 2.)), road);
+  float dash = (1. - smoothstep(.1, .18, abs(p.x - 140.))) * step(.5, fract(p.y / 9.)) * step(150., r)
+             + (1. - smoothstep(.1, .18, abs(r - 140.))) * step(.5, fract(atan(p.y, p.x) * 140. / 9.));
+  site = mix(site, vec3(.85, .82, .62), clamp(dash, 0., 1.) * road);
+  vec3 c = mix(neu, mc, uMat);
+  c = mix(c, site, uSite);
+  c *= 1. - .35 * (1. - smoothstep(50., 66., r)) - .3 * (1. - smoothstep(50., 66., r2));   // 塔の足もとの陰
+  c *= 1. - uCS * .55 * cloudSh(vW, uWT);
+  diffuseColor.rgb = c;
+}`,
+  fog:`gl_FragColor.rgb = mix(gl_FragColor.rgb, uHor, smoothstep(2500., 14000., length(vW.xz - cameraPosition.xz)));`,
+});
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(60000, 60000).rotateX(-Math.PI / 2), groundMat);
+ground.receiveShadow = true;
+scene.add(ground);
+
+// ---------- 空 ----------
+const SU = { uTop:{ value:new THREE.Color() }, uHor:{ value:new THREE.Color() }, uBot:{ value:new THREE.Color() }, uCloud:{ value:new THREE.Vector3() } };
+const sky = new THREE.Mesh(new THREE.SphereGeometry(30000, 32, 16), new THREE.ShaderMaterial({
+  uniforms:SU, side:THREE.BackSide, depthWrite:false, fog:false,
+  vertexShader:`varying vec3 vD; void main(){ vD = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.); gl_Position = p.xyww; }`,
+  fragmentShader:`uniform vec3 uTop, uHor, uBot, uCloud; varying vec3 vD;
+    ${NOISE}
+    void main(){ float y = vD.y; vec3 c = y > 0. ? mix(uHor, uTop, pow(clamp(y, 0., 1.), .6)) : mix(uHor, uBot, clamp(-y * 6., 0., 1.));
+      // 雲の濃淡(地平線に近いほど薄く引き伸ばす)
+      vec2 q = vD.xz / (max(y, 0.) + .12) * 1.6;
+      float cl = n2(q) * .5 + n2(q * 2.1 + 7.) * .3 + n2(q * 4.3 + 3.) * .2;
+      c *= 1. + (cl - .5) * .14 * uCloud.x * smoothstep(0., .08, y);
+      gl_FragColor = vec4(c, 1.); }`,
+}));
+sky.renderOrder = -1; sky.frustumCulled = false;
+scene.add(sky);
+
+// ---------- 光 ----------
+const hemi = new THREE.HemisphereLight(0xe2e8ef, 0x8a867c, 1);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xffffff, 0);
+// 曇りでも空の明るい側はある。影で、柱の格子と足もとの接地を見せる。影の範囲は塔2基を含める
+sun.target.position.set(-135, 0, -170);
+sun.position.set(-135 - 200, 600, -170 + 300);
+sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left:-330, right:330, top:330, bottom:-330, near:100, far:1600 });
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.4;
+scene.add(sun, sun.target);
+const spot = new THREE.SpotLight(0xffe0b5, 0, 0, 0.75, 0.55, 2);
+spot.position.set(230, 280, 170);
+spot.target.position.set(0, 40, 20);
+spot.castShadow = true;
+spot.shadow.mapSize.set(2048, 2048);
+spot.shadow.camera.near = 60; spot.shadow.camera.far = 1400;
+spot.shadow.bias = -0.0004; spot.shadow.normalBias = 0.6;
+scene.add(spot, spot.target);
+const SPOT_I = 420000;
+
+// ---------- 参照物:机の小物(模型 1cm = 5) ----------
+const modelProps = new THREE.Group();
+scene.add(modelProps);
+function std(color, roughness = 0.6, metalness = 0) { return new THREE.MeshStandardMaterial({ color, roughness, metalness }); }
+{ // マグカップ(高さ10cm)
+  const prof = [[0, 0], [17, 0], [18.6, 1.5], [20, 48], [20, 50], [18.4, 50], [18.4, 6], [16, 4.2], [0, 4.2]].map(([x, y]) => new THREE.Vector2(x, y));
+  const cupMat = std(0xd8553a, 0.28);
+  const cup = new THREE.Mesh(new THREE.LatheGeometry(prof, 64), cupMat);
+  const handle = new THREE.Mesh(new THREE.TorusGeometry(11, 2.4, 12, 40, Math.PI), cupMat);
+  handle.rotation.z = -Math.PI / 2; handle.position.set(19, 26, 0);
+  const coffee = new THREE.Mesh(new THREE.CircleGeometry(18.4, 48).rotateX(-Math.PI / 2), std(0x2b160b, 0.15));
+  coffee.position.y = 41;
+  const g = new THREE.Group(); g.add(cup, handle, coffee);
+  g.position.set(122, 0, 22); g.rotation.y = -0.6;
+  modelProps.add(g);
+}
+{ // 鉛筆(17.5cm)
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(1.75, 1.75, 70, 6), std(0xf0be2c, 0.45));
+  const wood = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 1.75, 9, 6), std(0xe6c597, 0.8)); wood.position.y = 39.5;
+  const lead = new THREE.Mesh(new THREE.ConeGeometry(0.45, 2, 8), std(0x333333, 0.4)); lead.position.y = 45;
+  const band = new THREE.Mesh(new THREE.CylinderGeometry(1.85, 1.85, 4, 12), std(0xb8b8b0, 0.3, 0.9)); band.position.y = -37;
+  const eraser = new THREE.Mesh(new THREE.CylinderGeometry(1.75, 1.75, 4, 12), std(0xe58c95, 0.7)); eraser.position.y = -41;
+  g.add(body, wood, lead, band, eraser);
+  g.rotation.z = Math.PI / 2; g.rotation.y = 0.5;
+  g.position.set(-70, 1.75, 75);
+  modelProps.add(g);
+}
+{ // 定規(30cm)
+  const c = document.createElement('canvas'); c.width = 2048; c.height = 160;
+  const x = c.getContext('2d');
+  x.fillStyle = '#f3f1ea'; x.fillRect(0, 0, c.width, c.height);
+  x.fillStyle = '#222'; x.font = 'bold 30px sans-serif'; x.textAlign = 'center';
+  for (let mm = 0; mm <= 300; mm++) {
+    const px = 24 + mm * (2000 / 300), len = mm % 10 === 0 ? 56 : mm % 5 === 0 ? 38 : 24;
+    x.fillRect(px - 1.5, 0, 3, len);
+    if (mm % 10 === 0) x.fillText(String(mm / 10), px, 96);
+  }
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 8;
+  const side = std(0xe9e6dc, 0.5);
+  const top = new THREE.MeshStandardMaterial({ map:tex, roughness:0.5 });
+  const ruler = new THREE.Mesh(new THREE.BoxGeometry(155, 1.2, 15), [side, side, top, side, side, side]);
+  ruler.position.set(0, 0.6, 108); ruler.rotation.y = -0.12;
+  modelProps.add(ruler);
+}
+
+// ---------- 参照物:柵・街灯・管理棟(巨大 1 = 1m) ----------
+const giantProps = new THREE.Group();
+scene.add(giantProps);
+const rand = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
+// 柵(高さ2m、2.5m おき)
+{
+  const R = 104, n = Math.round(R * Math.PI * 2 / 2.5);
+  const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 2, 0.12).translate(0, 1, 0), std(0x6d6f70, 0.5, 0.6), n);
+  const m = new THREE.Matrix4();
+  for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; m.makeTranslation(Math.cos(a) * R, 0, Math.sin(a) * R); posts.setMatrixAt(i, m); }
+  giantProps.add(posts);
+  for (const y of [1.0, 1.95]) giantProps.add(new THREE.Mesh(new THREE.TorusGeometry(R, 0.05, 4, 400).rotateX(Math.PI / 2).translate(0, y, 0), std(0x6d6f70, 0.5, 0.6)));
+}
+// 塔の頂上の手すり(高さ1.1m、2m おき)
+{
+  const n = Math.round(R_TOP * Math.PI * 2 / 2);
+  const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.08, 1.1, 0.08).translate(0, 0.55, 0), std(0x55585a, 0.5, 0.6), n);
+  const m = new THREE.Matrix4();
+  for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2; m.makeTranslation(Math.cos(a) * (R_TOP - 0.3), H + 0.6, Math.sin(a) * (R_TOP - 0.3)); posts.setMatrixAt(i, m); }
+  giantProps.add(posts);
+  giantProps.add(new THREE.Mesh(new THREE.TorusGeometry(R_TOP - 0.3, 0.05, 4, 300).rotateX(Math.PI / 2).translate(0, H + 1.7, 0), std(0x55585a, 0.5, 0.6)));
+}
+// 管理棟(窓は3.5mの階ごと)
+{
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const x = c.getContext('2d');
+  x.fillStyle = '#bdb8ad'; x.fillRect(0, 0, 64, 64);
+  x.fillStyle = '#39434c'; x.fillRect(14, 18, 36, 26);
+  x.fillStyle = '#a9a398'; x.fillRect(0, 60, 64, 4);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(12, 4); tex.anisotropy = 8;
+  const wall = new THREE.MeshStandardMaterial({ map:tex, roughness:0.85 });
+  const roof = std(0x8c8a84, 0.9);
+  const b = new THREE.Mesh(new THREE.BoxGeometry(38, 14, 16), [wall, wall, roof, roof, wall, wall]);
+  b.position.set(-104, 7, 124); b.castShadow = b.receiveShadow = true;
+  giantProps.add(b);
+}
+// 街灯(9m、30m おき)
+{
+  const zs = []; for (let z = -900; z <= 1200; z += 30) zs.push(z);
+  const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.1, 0.14, 9, 5).translate(0, 4.5, 0), std(0x777a7c, 0.5, 0.6), zs.length);
+  const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(1.6, 0.25, 0.4).translate(-0.7, 9, 0), std(0x777a7c, 0.5, 0.6), zs.length);
+  const m = new THREE.Matrix4();
+  zs.forEach((z, i) => { m.makeTranslation(146.5, 0, z); poles.setMatrixAt(i, m); heads.setMatrixAt(i, m); });
+  giantProps.add(poles, heads);
+}
+// カメラのすぐ先を横切る道と街灯(人の目の高さだと塔の足もとが線に潰れるので、手前にも物差しを置く)
+const near = new THREE.Group();
+giantProps.add(near);
+{
+  const road = new THREE.Mesh(new THREE.PlaneGeometry(1400, 8).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color:0x4a4b4e, roughness:0.9, polygonOffset:true, polygonOffsetFactor:-2, polygonOffsetUnits:-2 }));   // 曇り空の下のアスファルトは黒ではなく灰色
+  road.receiveShadow = true;
+  near.add(road);
+  const zs = []; for (let x = -300; x <= 300; x += 30) zs.push(x);
+  const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.1, 0.14, 9, 5).translate(0, 4.5, 0), std(0x777a7c, 0.5, 0.6), zs.length);
+  const m = new THREE.Matrix4();
+  const heads = new THREE.InstancedMesh(new THREE.BoxGeometry(0.4, 0.25, 1.6).translate(0, 9, 0.7), poles.material, zs.length);
+  zs.forEach((x, i) => { m.makeTranslation(x, 0, -5.2); poles.setMatrixAt(i, m); heads.setMatrixAt(i, m); });
+  near.add(poles, heads);
+}
+
+// ---------- 湯気 ----------
+// もくもくした雲の塊: 重ねた値ノイズを、丸い減衰で切り抜く。上側を明るく、下側を少し灰色にする
+const steamTex = (() => {
+  const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
+  const x = c.getContext('2d'), img = x.createImageData(N, N);
+  const G = 16, grid = Array.from({ length:G * G }, () => rand());
+  const vn = (u, v, s) => {
+    u *= s; v *= s; const i = Math.floor(u), j = Math.floor(v), fu = u - i, fv = v - j;
+    const a = (p, q) => grid[((p % G) + G) % G + (((q % G) + G) % G) * G];
+    const su = fu * fu * (3 - 2 * fu), sv = fv * fv * (3 - 2 * fv);
+    return lerp(lerp(a(i, j), a(i + 1, j), su), lerp(a(i, j + 1), a(i + 1, j + 1), su), sv);
+  };
+  for (let py = 0; py < N; py++) for (let px = 0; px < N; px++) {
+    const u = px / N, v = py / N, r = Math.hypot(u - .5, v - .5) * 2;
+    const n = vn(u, v, 4) * .5 + vn(u, v, 8) * .25 + vn(u, v, 16) * .15 + vn(u, v, 32) * .1;
+    const a = Math.max(0, Math.min(1, (n * 1.25 - r * r * 1.1) * 2.2));
+    const shade = 255 * (0.82 + 0.18 * (1 - v));
+    const o = (py * N + px) * 4;
+    img.data[o] = shade; img.data[o + 1] = shade; img.data[o + 2] = shade * 1.01; img.data[o + 3] = a * 255;
+  }
+  x.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+// 湯気と雲は、塔などとは別の絵(fxRT)に描き、あとで重ねる。
+// 描くときに塔などの深さと比べ、物に近づくほど透明にする(板が塔の面に食い込んだ直線の境目を出さない)
+const fxScene = new THREE.Scene();
+const fxRT = new THREE.WebGLRenderTarget(4, 4, { type:THREE.HalfFloatType, depthBuffer:false });
+const FXU = { tDepth:{ value:null }, uRes:{ value:new THREE.Vector2() }, uNear:{ value:1 }, uFar:{ value:1 },
+  fogColor:{ value:new THREE.Color() }, fogDensity:{ value:0 } };
+function fxMat(gray) {
+  return new THREE.ShaderMaterial({
+    uniforms:{ ...FXU, map:{ value:steamTex }, opacity:{ value:0 }, gray:{ value:gray }, rotation:{ value:0 } },
+    transparent:true, depthTest:false, depthWrite:false, premultipliedAlpha:true,
+    vertexShader:`uniform float rotation; varying vec2 vUv; varying float vZ;
+      void main(){
+        vUv = uv;
+        vec4 mv = modelViewMatrix * vec4(0., 0., 0., 1.);
+        vec2 a = position.xy * vec2(length(modelMatrix[0].xyz), length(modelMatrix[1].xyz));
+        mv.xy += vec2(cos(rotation) * a.x - sin(rotation) * a.y, sin(rotation) * a.x + cos(rotation) * a.y);
+        vZ = -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader:`uniform sampler2D map, tDepth; uniform vec2 uRes; uniform float uNear, uFar, opacity, gray, fogDensity; uniform vec3 fogColor;
+      varying vec2 vUv; varying float vZ;
+      void main(){
+        float z = texture2D(tDepth, gl_FragCoord.xy / uRes).x * 2. - 1.;
+        float sceneZ = 2. * uNear * uFar / (uFar + uNear - z * (uFar - uNear));
+        vec4 t = texture2D(map, vUv);
+        float a = t.a * opacity * clamp((sceneZ - vZ) / 20., 0., 1.);
+        vec3 c = mix(t.rgb * gray, fogColor, 1. - exp(-fogDensity * fogDensity * vZ * vZ));
+        gl_FragColor = vec4(c * a, a);
+      }`,
+  });
+}
+const steam = [];
+for (const [cx, cz, n] of [[0, 0, 70], [T2.x, T2.y, 46], [BACK[1][0], BACK[1][1], 30], [BACK[3][0], BACK[3][1], 30]]) {
+  for (let i = 0; i < n; i++) {
+    const s = new THREE.Sprite(fxMat(1));
+    steam.push({ s, cx, cz, ph:i / n, jx:rand() * 2 - 1, jz:rand() * 2 - 1, rot:(rand() - .5) * .5, sz:.8 + rand() * .5 });
+    fxScene.add(s);
+  }
+}
+
+// ---------- 雲の層(底が塔の頂上あたり。頂上がかかって隠れる) ----------
+const clouds = [];
+for (let i = 0; i < 150; i++) {
+  const s = new THREE.Sprite(fxMat(0.74));   // 低い雲の底は、明るい空より暗い灰色に見える
+  // 3割は塔のまわり(頂上を横切る)、残りは広く
+  const nearT = i % 3 === 0, cx = i % 6 === 0 ? T2.x : 0, cz = i % 6 === 0 ? T2.y : 0;
+  clouds.push({ s, cx:nearT ? cx : 0, w:nearT ? 600 : 3000, x0:nearT ? rand() * 600 : rand() * 3000, z:nearT ? cz + rand() * 160 - 80 : rand() * 3000 - 1700,
+    y:nearT ? 132 + rand() * 22 : 145 + rand() * 50, sz:200 + rand() * 300, a:.45 + rand() * .45 });
+  fxScene.add(s);
+}
+
+
+// ---------- 仕上げ(被写界深度と彩度) ----------
+const PU = {
+  tColor:{ value:rt.texture }, tFx:{ value:fxRT.texture }, tDepth:{ value:rt.depthTexture }, uRes:{ value:new THREE.Vector2() },
+  uNear:{ value:camera.near }, uFar:{ value:camera.far }, uFocus:{ value:300 }, uAperture:{ value:0 }, uMaxR:{ value:0 }, uSat:{ value:1 }, uTime:{ value:0 },
+  uBlue:{ value:0 }, uBlueCol:{ value:new THREE.Color(0xa9b9cf) },
+};
+const post = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  uniforms:PU, depthTest:false, depthWrite:false,
+  vertexShader:`varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }`,
+  fragmentShader:`
+uniform sampler2D tColor, tFx, tDepth; uniform vec2 uRes; uniform float uNear, uFar, uFocus, uAperture, uMaxR, uSat, uTime, uBlue; uniform vec3 uBlueCol; varying vec2 vUv;
+float viewZ(vec2 uv){ float z = texture2D(tDepth, uv).x * 2. - 1.; return 2. * uNear * uFar / (uFar + uNear - z * (uFar - uNear)); }
+// 塔などの絵に、湯気と雲の絵を重ねたもの
+vec3 sc(vec2 uv){ vec4 f = texture2D(tFx, uv); return texture2D(tColor, uv).rgb * (1. - f.a) + f.rgb; }
+float coc(float z){ return clamp(uAperture * abs(1. - uFocus / z), 0., uMaxR); }
+void main(){
+  vec3 c0 = sc(vUv);
+  vec3 acc = c0; float ws = 1.;
+  if (uMaxR > .5) {
+    float z0 = viewZ(vUv), r0 = coc(z0);
+    float rot = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2832;
+    for (int i = 0; i < 48; i++) {
+      float fi = float(i) + .5;
+      float rr = sqrt(fi / 48.) * uMaxR;
+      float a = fi * 2.39996 + rot;
+      vec2 uv = vUv + vec2(cos(a), sin(a)) * rr / uRes;
+      float z = viewZ(uv), r = coc(z);
+      float rs = z > z0 ? min(r, r0) : r;          // 奥のぼけは手前のピントの合った所ににじませない
+      float w = smoothstep(rr - 1., rr + .5, rs);
+      acc += sc(uv) * w; ws += w;
+    }
+  }
+  vec3 col = acc / ws;
+  float l = dot(col, vec3(.2126, .7152, .0722));
+  col = max(mix(vec3(l), col, uSat), 0.);
+  // 空気の青み: 遠いほど物の色が弱まり(青がいちばん早く散らされる)、代わりに散らされた青い光が混ざる。空は地平線の色を少し青くするだけ
+  if (uBlue > 0.) {
+    if (texture2D(tDepth, vUv).x > .99999) col = mix(col, uBlueCol, .35 * uBlue);   // 空は地平線の色を少し青く
+    else {
+      float zb = viewZ(vUv) * uBlue / 1500.;
+      col = col * exp(-zb * vec3(.55, .78, 1.)) + uBlueCol * (1. - exp(-zb));
+    }
+  }
+  // 写真らしさ: 周辺減光と、コマごとに変わる細かい粒子
+  col *= 1. - .2 * pow(length(vUv - .5) * 1.3, 2.5);
+  float gr = fract(sin(dot(gl_FragCoord.xy + uTime * 61.7, vec2(12.9898, 78.233))) * 43758.5453) - .5;
+  col *= 1. + gr * .06;
+  gl_FragColor = vec4(col, 1.);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`,
+}));
+const postScene = new THREE.Scene(); postScene.add(post);
+const postCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+// ---------- つまみを絵に反映する ----------
+const ROOM_TOP = new THREE.Color(0x24221f), ROOM_HOR = new THREE.Color(0x45413a), ROOM_BOT = new THREE.Color(0x2a2824);
+const SKY_TOP = new THREE.Color(0xa9b1ba), SKY_HOR = new THREE.Color(0xd6d9dc), SKY_BOT = new THREE.Color(0xb7b9b4);
+const tmpA = new THREE.Color(), tmpB = new THREE.Color();
+function setOpacity(group, a) {
+  group.visible = a > 0.004;
+  group.traverse(o => {
+    if (!o.material) return;
+    for (const m of [].concat(o.material)) { m.opacity = a; m.transparent = a < 0.995; }
+  });
+}
+let lastRef = -1;
+function apply() {
+  const L = k.light, F = k.fog, D = k.detail, R = k.ref;
+  TU.uDetail.value = D;
+  towerMat.roughness = lerp(0.38, 0.95, D);
+  if (R !== lastRef) {
+    const uMat = 1 - smooth(0, 0.45, R), uSite = smooth(0.55, 1, R);
+    GU.uMat.value = uMat; GU.uSite.value = uSite;
+    setOpacity(modelProps, uMat); setOpacity(giantProps, uSite);
+    lastRef = R;
+  }
+  spot.intensity = (1 - L) ** 1.5 * SPOT_I;
+  hemi.intensity = lerp(0.35, 1.55, L);
+  sun.intensity = lerp(0, 1.7, L);
+  sun.castShadow = L > 0.05;
+  SU.uTop.value.copy(tmpA.copy(ROOM_TOP).lerp(SKY_TOP, L)).lerp(FOG_COL, F * .5);
+  SU.uHor.value.copy(tmpA.copy(ROOM_HOR).lerp(SKY_HOR, L)).lerp(FOG_COL, F);
+  SU.uBot.value.copy(tmpB.copy(ROOM_BOT).lerp(SKY_BOT, L)).lerp(FOG_COL, F);
+  GU.uHor.value.copy(SU.uHor.value);
+  SU.uCloud.value.x = L * (1 - F * .5);   // 部屋の天井には雲を出さない。霧が濃いと雲も薄れる
+  scene.fog.density = F * 0.0011;   // 奥の塔が 400m ごとに一段ずつ薄れる濃さ
+  for (const p of steam) p.s.material.uniforms.gray.value = lerp(0.75, 1.0, L);
+  PU.uSat.value = lerp(1.3, 0.28, k.sat);
+  PU.uBlue.value = k.blue;
+  if (snd) snd.update(k.sound);
+}
+
+// カメラ:画面の中での塔の大きさが変わらない距離を探す
+const AZ0 = 0.45;
+const fitCam = new THREE.PerspectiveCamera(40, 1, 1, 1e6);
+const FIT_PTS = [];
+for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2;
+  FIT_PTS.push(new THREE.Vector3(Math.cos(a) * (R_LEG + 2), 0, Math.sin(a) * (R_LEG + 2)), new THREE.Vector3(Math.cos(a) * R_TOP, H, Math.sin(a) * R_TOP)); }
+const tv = new THREE.Vector3();
+function fits(camY, ty, az, d) {
+  fitCam.position.set(Math.sin(az) * d, camY, Math.cos(az) * d);
+  fitCam.lookAt(0, ty, 0); fitCam.updateMatrixWorld(); fitCam.matrixWorldInverse.copy(fitCam.matrixWorld).invert();
+  for (const p of FIT_PTS) { tv.copy(p).project(fitCam); if (Math.abs(tv.x) > 0.78 || tv.y > 0.78 || tv.y < -0.74 || tv.z > 1) return false; }
+  return true;
+}
+function placeCamera(t) {
+  const v = k.view;
+  // 画角つまみが 0.46 なら、前と同じ 36〜44°(視点の高さで少し変える)。つまみの両端はちょうど 20° と 90°。
+  // 見下ろすときは広角を 50° までにする(それより広いと、塔の真上近くまで寄って湯気が画面をふさぐ)
+  const fe = 4 * k.fov * (1 - k.fov);   // 両端で0、真ん中で1
+  camera.fov = Math.min(lerpLog(20, 90, k.fov) * (1 + (lerp(0.9, 1.1, v) - 1) * fe), lerp(50, 90, v));
+  fitCam.fov = camera.fov; fitCam.aspect = camera.aspect; fitCam.updateProjectionMatrix();
+  const amp = lerp(0.55, 0.03, k.parallax);
+  const az = AZ0 + amp * Math.sin(t * 0.055);
+  const camY = lerpLog(250, 1.7, v) * (1 + 0.12 * (1 - k.parallax) * Math.sin(t * 0.04 + 1));
+  const ty = lerp(58, 82, v);
+  let lo = 80, hi = 8000;
+  for (let i = 0; i < 22; i++) { const m = (lo + hi) / 2; if (fits(camY, ty, az, m)) hi = m; else lo = m; }
+  camera.position.set(Math.sin(az) * hi, camY, Math.cos(az) * hi);
+  const nd = Math.max(150, hi - 30);
+  near.position.set(Math.sin(AZ0) * nd, 0, Math.cos(AZ0) * nd); near.rotation.y = AZ0;
+  camera.lookAt(0, ty, 0);
+  camera.updateProjectionMatrix();
+  sky.position.copy(camera.position);
+  const hpx = rt.height;
+  PU.uFocus.value = camera.position.distanceTo(tv.set(0, ty, 0));
+  PU.uAperture.value = (1 - k.dof) ** 1.5 * 0.13 * hpx;
+  PU.uMaxR.value = (1 - k.dof) * Math.min(26, 0.026 * hpx);
+}
+
+// 動くもの(時間 t は「巨大」で1秒 = 1秒、「模型」では速く進む)
+function animate(t) {
+  const RISE = 240, LIFE = 40;  // 湯気は約6m/sで上がる
+  for (const p of steam) {
+    const ph = (t / LIFE + p.ph) % 1;
+    const spread = R_TOP * (0.55 + ph * 1.1);
+    p.s.position.set(p.cx + p.jx * spread * 0.6 + ph * ph * 120, H + 4 + ph * RISE, p.cz + p.jz * spread * 0.6);
+    const sz = (55 + ph * 190) * p.sz;
+    p.s.scale.set(sz, sz, 1);
+    p.s.material.uniforms.rotation.value = p.rot + ph * 0.3;   // 上を明るく塗ってあるので、ほとんど回さない
+    p.s.material.uniforms.opacity.value = Math.sin(Math.PI * Math.min(1, ph * 1.4)) ** 1.5 * 0.62 * (1 - ph * 0.5);
+  }
+  // 雲は 8m/s で流れる。カメラのすぐそばの雲は消す(画面をふさがないように)
+  for (const c of clouds) {
+    c.s.visible = k.cloud > 0.01;
+    if (!c.s.visible) continue;
+    const u = ((c.x0 + 8 * t) % c.w) / c.w;
+    const x = c.cx + u * c.w - c.w / 2;   // 幅 w の中を流れて、反対側から戻る(端では消えているので、飛ぶのは見えない)
+    // 平たい塊にして、見える部分の下端(中心から高さの約35%下)を雲の底 c.y にそろえる
+    const hh = c.sz * 0.45;
+    c.s.position.set(x, c.y + hh * 0.35, c.z);
+    c.s.scale.set(c.sz * 2, hh, 1);
+    // 上から見下ろすときは薄くする(雲の層の上に出ると、下が全部隠れてしまうため)
+    c.s.material.uniforms.opacity.value = c.a * k.cloud * smooth(80, 260, c.s.position.distanceTo(camera.position))
+      * (1 - 0.8 * smooth(c.y, c.y + 80, camera.position.y))
+      * smooth(0, .2, u) * (1 - smooth(.8, 1, u));
+  }
+  CS.uCS.value = k.cloud; CS.uWT.value = t;
+}
+
+// ---------- 画面サイズ ----------
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  const W = Math.round(w * DPR), Hh = Math.round(h * DPR);
+  rt.setSize(W, Hh); fxRT.setSize(W, Hh); PU.uRes.value.set(W, Hh); FXU.uRes.value.set(W, Hh);
+}
+new ResizeObserver(resize).observe(view);
+resize();
+
+// ---------- UI ----------
+const box = document.getElementById('knobs');
+const inputs = {};
+for (const c of CATS) {
+  const h = document.createElement('div'); h.className = 'cat';
+  h.innerHTML = `${c.name}<small>${c.note}</small>`; box.appendChild(h);
+  for (const o of KNOBS.filter(o => o.cat === c.id)) {
+    const d = document.createElement('div'); d.className = 'knob';
+    d.innerHTML = `<div class="top"><span class="name">${o.name}</span></div><input type="range" min="0" max="1000" value="0" aria-label="${o.name}"><div class="ends">${o.ends.map(e => `<span>${e}</span>`).join('')}</div>`;
+    const inp = d.querySelector('input');
+    inp.addEventListener('input', () => { anim = null; k[o.id] = inp.value / 1000; syncMaster(); touched(); });
+    inputs[o.id] = inp; box.appendChild(d);
+  }
+}
+const master = document.getElementById('master');
+syncInputs();   // 画角つまみの初めの位置を出す
+master.addEventListener('input', () => { anim = null; const v = master.value / 1000; for (const o of TIED) k[o.id] = v; syncInputs(); touched(); });
+function syncInputs() { for (const o of KNOBS) inputs[o.id].value = Math.round(k[o.id] * 1000); }
+function syncMaster() { master.value = Math.round(TIED.reduce((s, o) => s + k[o.id], 0) / TIED.length * 1000); }
+let anim = null;
+function goTo(target, dur = 1800) { anim = { from:{ ...k }, to:{ ...k, ...Object.fromEntries(TIED.map(o => [o.id, target])) }, t0:performance.now(), dur }; touched(); }
+document.querySelectorAll('.presets button').forEach(b => b.addEventListener('click', () => goTo(+b.dataset.p)));
+const panel = document.getElementById('panel'), fold = document.getElementById('fold');
+fold.addEventListener('click', () => { panel.classList.toggle('folded'); fold.textContent = panel.classList.contains('folded') ? 'つまみを出す' : 'つまみを隠す'; });
+const hint = document.getElementById('hint');
+let hintOff = false;
+function touched() { if (!hintOff) { hintOff = true; setTimeout(() => hint.style.opacity = 0, 2500); } }
+// 確かめ用:コンソールから window.scaleKnobs({fog:1}) のように呼べる
+window.scaleKnobs = (o) => { anim = null; Object.assign(k, o); syncInputs(); syncMaster(); return camera.position.toArray().map(Math.round); };
+
+// URL の ?k=0,0,1,... (つまみの順に、0〜1。足りない分は初めの値。画角以外は0)で始めの状態を決められる
+{
+  const q = new URLSearchParams(location.search).get('k');
+  if (q) { q.split(',').forEach((v, i) => { const x = parseFloat(v); if (KNOBS[i] && x >= 0 && x <= 1) k[KNOBS[i].id] = x; }); syncInputs(); syncMaster(); }
+}
+
+// ---------- 音(Web Audio) ----------
+// 冷却塔の中を水が落ちる轟音と、ときどき鳴る金属の音。つまみ1本で次をまとめて動かす。
+//   響き: 狭い部屋(0.3秒で消える)⇔ 広い空間(6秒尾を引く)。2つの響きを混ぜる割合を変える
+//   こだま: 壁からの跳ね返りが戻るまでの時間 0.02秒 ⇔ 1.1秒(音は秒速約340m なので、約190m 先の壁)
+//   音の高さ: 金属の音の基音 1800Hz ⇔ 55Hz(大きい物ほど低く鳴る)。消えるまでの時間も 0.15秒 ⇔ 3.5秒
+//   高い音の減り方: 遠くの音ほど高い音が空気に吸われる。轟音の上の周波数 12kHz ⇔ 350Hz
+let snd = null;
+function makeSound() {
+  const ctx = new AudioContext();
+  const sr = ctx.sampleRate;
+  const P = (a, v) => a.setTargetAtTime(v, ctx.currentTime, 0.15);
+  // 雑音と響きの元
+  const noiseBuf = ctx.createBuffer(2, sr * 4, sr);
+  for (let c = 0; c < 2; c++) { const d = noiseBuf.getChannelData(c); let b = 0;
+    for (let i = 0; i < d.length; i++) { const w = Math.random() * 2 - 1; b = 0.97 * b + 0.03 * w; d[i] = w * 0.35 + b * 2.2; } }
+  const ir = (sec) => { const n = Math.floor(sr * sec), buf = ctx.createBuffer(2, n, sr);
+    for (let c = 0; c < 2; c++) { const d = buf.getChannelData(c);
+      for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2) * Math.exp(-3 * i / n); }
+    return buf; };
+  const out = ctx.createDynamicsCompressor(); out.connect(ctx.destination);
+  const master = ctx.createGain(); master.gain.value = 0; master.connect(out);
+  const air = ctx.createBiquadFilter(); air.type = 'lowpass'; air.connect(master);   // 空気が高い音を吸う
+  const dry = ctx.createGain(); dry.connect(air);
+  const small = ctx.createConvolver(); small.buffer = ir(0.3);
+  const big = ctx.createConvolver(); big.buffer = ir(6);
+  const gS = ctx.createGain(), gB = ctx.createGain();
+  small.connect(gS); big.connect(gB); gS.connect(air); gB.connect(air);
+  const echo = ctx.createDelay(2), fb = ctx.createGain(), eLP = ctx.createBiquadFilter(), eOut = ctx.createGain();
+  eLP.type = 'lowpass'; eLP.frequency.value = 1500;
+  echo.connect(eLP); eLP.connect(fb); fb.connect(echo); eLP.connect(eOut); eOut.connect(air);
+  const bus = ctx.createGain();   // ここに入れた音が、乾いた音・響き・こだまに分かれる
+  bus.connect(dry); bus.connect(small); bus.connect(big); bus.connect(echo);
+  // 水の轟音
+  const src = ctx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass';
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass';
+  const roar = ctx.createGain();
+  src.connect(hp); hp.connect(lp); lp.connect(roar); roar.connect(bus); src.start();
+  let x = 0;
+  // 金属の音(タンクや配管を叩いたような音)。部分音を重ね、高い部分音ほど早く消す
+  function clank() {
+    setTimeout(clank, 2500 + Math.random() * 4000);
+    if (ctx.state !== 'running') return;   // 止めている間は鳴らさない(再開したときにまとめて鳴らないように)
+    const t0 = ctx.currentTime + 0.05, f0 = lerpLog(1800, 55, x), dec = lerpLog(0.15, 3.5, x);
+    const g = ctx.createGain(); g.gain.value = 0.5; g.connect(bus);
+    [[1, 1], [2.32, .6], [4.25, .4], [6.63, .25]].forEach(([r, a], i) => {
+      const o = ctx.createOscillator(), e = ctx.createGain();
+      o.frequency.value = f0 * r * (1 + (Math.random() - .5) * .01);
+      e.gain.setValueAtTime(0, t0); e.gain.linearRampToValueAtTime(a, t0 + 0.004 + 0.03 * x);
+      e.gain.exponentialRampToValueAtTime(1e-4, t0 + dec / (1 + i * 0.7));
+      o.connect(e); e.connect(g); o.start(t0); o.stop(t0 + dec + 0.1);
+    });
+  }
+  setTimeout(clank, 600);
+  return {
+    ctx,
+    analyser:(() => { const a = ctx.createAnalyser(); master.connect(a); return a; })(),
+    update(v) {
+      x = v;
+      P(hp.frequency, lerpLog(1500, 25, v)); P(lp.frequency, lerpLog(12000, 350, v)); P(roar.gain, lerp(0.25, 0.9, v));
+      P(dry.gain, lerp(1, 0.35, v)); P(gS.gain, (1 - v) * 0.5); P(gB.gain, v * 0.9);
+      P(echo.delayTime, lerp(0.02, 1.1, v)); P(fb.gain, lerp(0.1, 0.45, v)); P(eOut.gain, lerp(0.05, 0.5, v));
+      P(air.frequency, lerpLog(16000, 2500, v));
+    },
+    on(play) { P(master.gain, play ? 0.6 : 0); },
+  };
+}
+{
+  const b = document.getElementById('sound');
+  let playing = false;
+  b.addEventListener('click', async () => {
+    if (!snd) { snd = makeSound(); snd.update(k.sound); window.scaleSound = snd; }   // 確かめ用
+    playing = !playing;
+    if (playing) await snd.ctx.resume();
+    snd.on(playing);
+    if (!playing) setTimeout(() => { if (!playing) snd.ctx.suspend(); }, 600);   // 音が消えてから、音の処理も止める
+    b.classList.toggle('on', playing);
+    b.textContent = playing ? '音を止める' : '音を出す(ヘッドホン推奨)';
+  });
+}
+
+// ---------- ループ ----------
+let simT = 0, last = performance.now();
+let recording = false;
+function frame(now) {
+  if (recording) { requestAnimationFrame(frame); return; }   // 書き出し中は、コマを外から進める
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (anim) {
+    let u = Math.min(1, (now - anim.t0) / anim.dur); const e = u * u * (3 - 2 * u);
+    for (const o of KNOBS) k[o.id] = lerp(anim.from[o.id], anim.to[o.id], e);
+    syncInputs(); syncMaster();
+    if (u >= 1) anim = null;
+  }
+  simT += dt * lerpLog(14, 1, k.speed);
+  draw((now * 0.001) % 100);
+  requestAnimationFrame(frame);
+}
+function draw(time) {
+  apply();
+  placeCamera(simT);
+  animate(simT);
+  PU.uTime.value = time;
+  renderer.setRenderTarget(rt); renderer.render(scene, camera);
+  FXU.tDepth.value = rt.depthTexture; FXU.uNear.value = camera.near; FXU.uFar.value = camera.far;
+  FXU.fogColor.value.copy(scene.fog.color); FXU.fogDensity.value = scene.fog.density;
+  renderer.setRenderTarget(fxRT); renderer.setClearColor(0x000000, 0); renderer.clear(true, false, false);
+  renderer.autoClear = false; renderer.render(fxScene, camera); renderer.autoClear = true;
+  renderer.setClearColor(0x000000, 1);
+  renderer.setRenderTarget(null); renderer.render(postScene, postCam);
+}
+requestAnimationFrame(frame);
+
+// 動画の書き出し用(output/ の書き出しスクリプトから使う)。
+// begin() でつまみの欄と案内を隠して画面いっぱいにし、step(dt, つまみ) で1コマ進めて、その絵を JPEG で返す
+window.scaleRecord = {
+  begin() {
+    recording = true; anim = null;
+    document.getElementById('panel').style.display = 'none';
+    document.getElementById('hint').style.display = 'none';
+    resize(); simT = 0;
+  },
+  step(dt, knobs) {
+    Object.assign(k, knobs);
+    simT += dt * lerpLog(14, 1, k.speed);
+    draw(simT % 100);
+    return canvas.toDataURL('image/jpeg', 0.92);
+  },
+};
+</script>
+</body>
+</html>
